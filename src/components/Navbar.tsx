@@ -8,6 +8,7 @@ export const Navbar = () => {
   const navItems = [
     { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
     { path: "/attendance", label: "Attendance", icon: ScanFace },
+    { path: "/monitoring", label: "Live Monitoring", icon: Brain },
     { path: "/analytics", label: "Analytics", icon: BarChart3 },
   ];
 

@@ -8,6 +8,8 @@ import Dashboard from "./pages/Dashboard";
 import Attendance from "./pages/Attendance";
 import Analytics from "./pages/Analytics";
 import Auth from "./pages/Auth";
+import Monitoring from "./pages/Monitoring";
+import SessionSummary from "./pages/SessionSummary";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -24,6 +26,8 @@ const App = () => (
           <Route path="/attendance" element={<Attendance />} />
           <Route path="/attendance/:method" element={<Attendance />} />
           <Route path="/analytics" element={<Analytics />} />
+          <Route path="/monitoring" element={<Monitoring />} />
+          <Route path="/session/:id/summary" element={<SessionSummary />} />
           <Route path="/auth" element={<Auth />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
