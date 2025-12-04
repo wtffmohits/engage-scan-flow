@@ -3,7 +3,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { useFaceDetection } from "@/hooks/useFaceDetection";
 import { 
   Video, 
   AlertTriangle, 
@@ -13,7 +14,10 @@ import {
   BedDouble, 
   MessageSquare,
   TrendingUp,
-  Download
+  Download,
+  Loader2,
+  Camera,
+  UserCheck
 } from "lucide-react";
 
 interface StudentBehavior {
@@ -23,18 +27,25 @@ interface StudentBehavior {
   attention: number;
   activity: string;
   alert: boolean;
+  rollNo?: string;
 }
 
 const Monitoring = () => {
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [classEngagement, setClassEngagement] = useState(78);
-  const [students] = useState<StudentBehavior[]>([
-    { id: 1, name: "Student A", emotion: "Focused", attention: 95, activity: "Listening", alert: false },
-    { id: 2, name: "Student B", emotion: "Confused", attention: 65, activity: "Looking Down", alert: true },
-    { id: 3, name: "Student C", emotion: "Engaged", attention: 88, activity: "Taking Notes", alert: false },
-    { id: 4, name: "Student D", emotion: "Distracted", attention: 45, activity: "Using Phone", alert: true },
-    { id: 5, name: "Student E", emotion: "Neutral", attention: 72, activity: "Listening", alert: false },
-  ]);
+  const [students, setStudents] = useState<StudentBehavior[]>([]);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  
+  const { 
+    isLoading, 
+    isModelLoaded, 
+    detectedFaces, 
+    error,
+    startCamera, 
+    stopCamera, 
+    detectFaces,
+    canvasRef 
+  } = useFaceDetection();
 
   const [alerts, setAlerts] = useState([
     { time: "10:45:23", message: "Student D using phone detected", severity: "high" },
@@ -42,22 +53,100 @@ const Monitoring = () => {
     { time: "10:40:08", message: "Group discussion detected in row 3", severity: "low" },
   ]);
 
-  const [behaviorStats] = useState({
-    attentive: 12,
-    distracted: 3,
-    talking: 2,
-    sleeping: 1,
-    phoneUsage: 1,
+  const [behaviorStats, setBehaviorStats] = useState({
+    attentive: 0,
+    distracted: 0,
+    talking: 0,
+    sleeping: 0,
+    phoneUsage: 0,
   });
 
-  useEffect(() => {
-    if (isMonitoring) {
-      const interval = setInterval(() => {
-        setClassEngagement(prev => Math.min(100, Math.max(40, prev + (Math.random() - 0.5) * 10)));
-      }, 2000);
-      return () => clearInterval(interval);
+  // Handle start monitoring
+  const handleStartMonitoring = useCallback(async () => {
+    if (!videoRef.current || !isModelLoaded) return;
+    
+    const success = await startCamera(videoRef.current);
+    if (success) {
+      setIsMonitoring(true);
+      // Wait for video to be ready
+      videoRef.current.onloadedmetadata = () => {
+        videoRef.current?.play();
+        detectFaces();
+      };
     }
-  }, [isMonitoring]);
+  }, [isModelLoaded, startCamera, detectFaces]);
+
+  // Handle stop monitoring
+  const handleStopMonitoring = useCallback(() => {
+    stopCamera();
+    setIsMonitoring(false);
+    setStudents([]);
+    setBehaviorStats({
+      attentive: 0,
+      distracted: 0,
+      talking: 0,
+      sleeping: 0,
+      phoneUsage: 0,
+    });
+  }, [stopCamera]);
+
+  // Update students list when faces are detected
+  useEffect(() => {
+    if (detectedFaces.length > 0) {
+      const updatedStudents: StudentBehavior[] = detectedFaces.map((face, index) => ({
+        id: index + 1,
+        name: face.name,
+        rollNo: face.student?.rollNo,
+        emotion: face.isRegistered ? "Focused" : "Unknown",
+        attention: face.isRegistered ? face.confidence : 0,
+        activity: face.isRegistered ? "Present" : "Not Registered",
+        alert: !face.isRegistered
+      }));
+      setStudents(updatedStudents);
+      
+      // Update behavior stats
+      const registered = detectedFaces.filter(f => f.isRegistered).length;
+      const unregistered = detectedFaces.filter(f => !f.isRegistered).length;
+      setBehaviorStats({
+        attentive: registered,
+        distracted: unregistered,
+        talking: 0,
+        sleeping: 0,
+        phoneUsage: 0,
+      });
+      
+      // Add alert for new registered student detection
+      const registeredFaces = detectedFaces.filter(f => f.isRegistered);
+      if (registeredFaces.length > 0) {
+        const latestFace = registeredFaces[0];
+        const now = new Date();
+        const timeStr = now.toLocaleTimeString('en-US', { hour12: false });
+        
+        setAlerts(prev => {
+          const exists = prev.some(a => a.message.includes(latestFace.name));
+          if (!exists) {
+            return [{
+              time: timeStr,
+              message: `${latestFace.name} (Roll: ${latestFace.student?.rollNo}) detected - ${latestFace.confidence}% match`,
+              severity: "low"
+            }, ...prev].slice(0, 10);
+          }
+          return prev;
+        });
+      }
+    }
+  }, [detectedFaces]);
+
+  // Update class engagement based on detected faces
+  useEffect(() => {
+    if (isMonitoring && detectedFaces.length > 0) {
+      const avgConfidence = detectedFaces
+        .filter(f => f.isRegistered)
+        .reduce((sum, f) => sum + f.confidence, 0) / 
+        Math.max(detectedFaces.filter(f => f.isRegistered).length, 1);
+      setClassEngagement(avgConfidence || 0);
+    }
+  }, [isMonitoring, detectedFaces]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -81,66 +170,107 @@ const Monitoring = () => {
             <Card className="shadow-medium">
               <CardHeader>
                 <div className="flex items-center justify-between">
-                  <CardTitle>Live Camera Feed</CardTitle>
-                  <Badge variant={isMonitoring ? "default" : "secondary"}>
-                    {isMonitoring ? "● LIVE" : "Stopped"}
-                  </Badge>
+                  <CardTitle className="flex items-center gap-2">
+                    <Camera className="h-5 w-5" />
+                    Live Camera Feed
+                  </CardTitle>
+                  <div className="flex items-center gap-2">
+                    {isLoading && (
+                      <Badge variant="secondary" className="gap-1">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        Loading AI...
+                      </Badge>
+                    )}
+                    <Badge variant={isMonitoring ? "default" : "secondary"}>
+                      {isMonitoring ? "● LIVE" : "Stopped"}
+                    </Badge>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent>
                 <div className="aspect-video bg-muted rounded-lg relative overflow-hidden">
+                  {/* Video element - always present */}
+                  <video 
+                    ref={videoRef}
+                    className={`absolute inset-0 w-full h-full object-cover ${isMonitoring ? 'block' : 'hidden'}`}
+                    playsInline
+                    muted
+                  />
+                  
+                  {/* Canvas for face detection overlay */}
+                  <canvas 
+                    ref={canvasRef}
+                    className={`absolute inset-0 w-full h-full ${isMonitoring ? 'block' : 'hidden'}`}
+                  />
+                  
                   {!isMonitoring ? (
                     <div className="absolute inset-0 flex items-center justify-center">
                       <div className="text-center space-y-4">
                         <Video className="h-16 w-16 text-muted-foreground mx-auto" />
-                        <p className="text-muted-foreground">Start monitoring to view live feed</p>
-                        <Button onClick={() => setIsMonitoring(true)} variant="hero" size="lg" className="gap-2">
-                          <Video className="h-5 w-5" />
-                          Start Monitoring
+                        <p className="text-muted-foreground">
+                          {isLoading ? "Loading face detection models..." : "Start monitoring to view live feed"}
+                        </p>
+                        {error && (
+                          <p className="text-destructive text-sm">{error}</p>
+                        )}
+                        <Button 
+                          onClick={handleStartMonitoring} 
+                          variant="hero" 
+                          size="lg" 
+                          className="gap-2"
+                          disabled={isLoading || !isModelLoaded}
+                        >
+                          {isLoading ? (
+                            <Loader2 className="h-5 w-5 animate-spin" />
+                          ) : (
+                            <Video className="h-5 w-5" />
+                          )}
+                          {isLoading ? "Loading..." : "Start Monitoring"}
                         </Button>
                       </div>
                     </div>
                   ) : (
-                    <div className="relative w-full h-full bg-gradient-to-br from-primary/10 to-secondary/10">
-                      {/* Simulated AI Overlays */}
-                      <div className="absolute top-4 left-4 space-y-2">
-                        <div className="w-32 h-40 border-2 border-success rounded-lg p-2 bg-background/80 backdrop-blur-sm">
-                          <div className="text-xs space-y-1">
-                            <p className="font-semibold text-success">Student A</p>
-                            <p className="text-muted-foreground">😊 Focused</p>
-                            <Progress value={95} className="h-1" />
-                            <p className="text-[10px]">Attention: 95%</p>
-                          </div>
-                        </div>
+                    <>
+                      {/* Engagement overlay */}
+                      <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-background/90 backdrop-blur-sm px-4 py-2 rounded-lg shadow-lg">
+                        <p className="text-sm font-medium">
+                          Faces Detected: <span className="text-primary font-bold">{detectedFaces.length}</span>
+                          {detectedFaces.filter(f => f.isRegistered).length > 0 && (
+                            <span className="ml-2 text-success">
+                              ({detectedFaces.filter(f => f.isRegistered).length} registered)
+                            </span>
+                          )}
+                        </p>
                       </div>
 
-                      <div className="absolute top-4 right-4 space-y-2">
-                        <div className="w-32 h-40 border-2 border-destructive rounded-lg p-2 bg-background/80 backdrop-blur-sm">
-                          <div className="text-xs space-y-1">
-                            <p className="font-semibold text-destructive">Student D</p>
-                            <p className="text-muted-foreground">📱 Using Phone</p>
-                            <Progress value={45} className="h-1" />
-                            <p className="text-[10px]">Attention: 45%</p>
+                      {/* Detected faces info overlay */}
+                      {detectedFaces.filter(f => f.isRegistered).map((face, index) => (
+                        <div 
+                          key={face.id}
+                          className="absolute top-16 left-4 bg-background/90 backdrop-blur-sm p-3 rounded-lg shadow-lg border border-success/50"
+                          style={{ top: `${64 + index * 80}px` }}
+                        >
+                          <div className="flex items-center gap-2">
+                            <UserCheck className="h-4 w-4 text-success" />
+                            <div>
+                              <p className="font-semibold text-success text-sm">{face.name}</p>
+                              <p className="text-xs text-muted-foreground">Roll No: {face.student?.rollNo}</p>
+                              <p className="text-xs text-muted-foreground">Match: {face.confidence}%</p>
+                            </div>
                           </div>
                         </div>
-                      </div>
+                      ))}
 
-                      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 space-x-2">
-                        <Button onClick={() => setIsMonitoring(false)} variant="destructive">
+                      {/* Controls */}
+                      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2">
+                        <Button onClick={handleStopMonitoring} variant="destructive">
                           Stop Monitoring
                         </Button>
                         <Button variant="outline" className="bg-background/80 backdrop-blur-sm">
                           View All Students
                         </Button>
                       </div>
-
-                      {/* Engagement overlay */}
-                      <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-background/80 backdrop-blur-sm px-4 py-2 rounded-lg">
-                        <p className="text-xs font-medium">
-                          Class Engagement: <span className="text-primary font-bold">{Math.round(classEngagement)}%</span>
-                        </p>
-                      </div>
-                    </div>
+                    </>
                   )}
                 </div>
               </CardContent>
@@ -152,36 +282,51 @@ const Monitoring = () => {
                 <CardTitle className="flex items-center gap-2">
                   <Users className="h-5 w-5" />
                   Student Behavior Status
+                  {students.length > 0 && (
+                    <Badge variant="secondary" className="ml-2">{students.length} detected</Badge>
+                  )}
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="space-y-3">
-                  {students.map((student) => (
-                    <div 
-                      key={student.id}
-                      className={`flex items-center gap-3 p-3 rounded-lg border ${
-                        student.alert ? 'border-destructive/50 bg-destructive/5' : 'border-border bg-muted/30'
-                      }`}
-                    >
-                      <div className={`w-2 h-2 rounded-full ${
-                        student.attention > 80 ? 'bg-success' : 
-                        student.attention > 60 ? 'bg-yellow-500' : 'bg-destructive'
-                      }`}></div>
-                      <div className="flex-1">
-                        <div className="flex items-center justify-between mb-1">
-                          <p className="font-medium text-sm">{student.name}</p>
-                          <Badge variant={student.alert ? "destructive" : "secondary"} className="text-xs">
-                            {student.activity}
-                          </Badge>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Progress value={student.attention} className="h-1 flex-1" />
-                          <span className="text-xs text-muted-foreground">{student.attention}%</span>
+                {students.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Users className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                    <p>No students detected yet. Start monitoring to see student status.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {students.map((student) => (
+                      <div 
+                        key={student.id}
+                        className={`flex items-center gap-3 p-3 rounded-lg border ${
+                          student.alert ? 'border-destructive/50 bg-destructive/5' : 'border-success/50 bg-success/5'
+                        }`}
+                      >
+                        <div className={`w-2 h-2 rounded-full ${
+                          student.attention > 80 ? 'bg-success' : 
+                          student.attention > 60 ? 'bg-yellow-500' : 'bg-destructive'
+                        }`}></div>
+                        <div className="flex-1">
+                          <div className="flex items-center justify-between mb-1">
+                            <div>
+                              <p className="font-medium text-sm">{student.name}</p>
+                              {student.rollNo && (
+                                <p className="text-xs text-muted-foreground">Roll No: {student.rollNo}</p>
+                              )}
+                            </div>
+                            <Badge variant={student.alert ? "destructive" : "default"} className="text-xs">
+                              {student.activity}
+                            </Badge>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Progress value={student.attention} className="h-1 flex-1" />
+                            <span className="text-xs text-muted-foreground">{student.attention}%</span>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -199,7 +344,7 @@ const Monitoring = () => {
               <CardContent className="space-y-4">
                 <div className="space-y-2">
                   <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Active Attention</span>
+                    <span className="text-muted-foreground">Recognition Confidence</span>
                     <span className="font-semibold text-success">{Math.round(classEngagement)}%</span>
                   </div>
                   <Progress value={classEngagement} className="h-2" />
@@ -209,13 +354,13 @@ const Monitoring = () => {
                   <div className="p-3 rounded-lg bg-success/10 border border-success/20">
                     <Eye className="h-4 w-4 text-success mb-1" />
                     <p className="text-2xl font-bold text-success">{behaviorStats.attentive}</p>
-                    <p className="text-xs text-muted-foreground">Attentive</p>
+                    <p className="text-xs text-muted-foreground">Registered</p>
                   </div>
                   
                   <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20">
                     <AlertTriangle className="h-4 w-4 text-destructive mb-1" />
                     <p className="text-2xl font-bold text-destructive">{behaviorStats.distracted}</p>
-                    <p className="text-xs text-muted-foreground">Distracted</p>
+                    <p className="text-xs text-muted-foreground">Unknown</p>
                   </div>
 
                   <div className="p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
@@ -257,14 +402,14 @@ const Monitoring = () => {
                       className={`p-3 rounded-lg border ${
                         alert.severity === 'high' ? 'border-destructive/50 bg-destructive/5' :
                         alert.severity === 'medium' ? 'border-yellow-500/50 bg-yellow-500/5' :
-                        'border-blue-500/50 bg-blue-500/5'
+                        'border-success/50 bg-success/5'
                       }`}
                     >
                       <div className="flex items-start gap-2">
                         <AlertTriangle className={`h-4 w-4 mt-0.5 ${
                           alert.severity === 'high' ? 'text-destructive' :
                           alert.severity === 'medium' ? 'text-yellow-600' :
-                          'text-blue-600'
+                          'text-success'
                         }`} />
                         <div className="flex-1">
                           <p className="text-xs font-medium">{alert.message}</p>
