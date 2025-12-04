@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+
 import * as faceapi from "face-api.js";
 import * as cocoSsd from "@tensorflow-models/coco-ssd";
 import "@tensorflow/tfjs";
@@ -49,63 +50,59 @@ export const useFaceDetection = () => {
   const cocoModelRef = useRef<cocoSsd.ObjectDetection | null>(null);
   const lastAlertTimeRef = useRef<{ [key: string]: number }>({});
 
-  // -------- ALERT HELPER (cooldown) --------
-  const addAlert = useCallback((alert: Omit<BehaviorAlert, "id" | "timestamp">) => {
-    const alertKey = `${alert.type}-${alert.students.join("-")}`;
-    const now = Date.now();
-    const lastTime = lastAlertTimeRef.current[alertKey] || 0;
+  // Add alert with cooldown to prevent spam
+  const addAlert = useCallback(
+    (alert: Omit<BehaviorAlert, "id" | "timestamp">) => {
+      const alertKey = `${alert.type}-${alert.students.join("-")}`;
+      const now = Date.now();
+      const lastTime = lastAlertTimeRef.current[alertKey] || 0;
 
-    // 5 second cooldown
-    if (now - lastTime < 5000) return;
+      // 5 second cooldown for same alert
+      if (now - lastTime < 5000) return;
 
-    lastAlertTimeRef.current[alertKey] = now;
+      lastAlertTimeRef.current[alertKey] = now;
 
-    const newAlert: BehaviorAlert = {
-      ...alert,
-      id: `alert-${now}`,
-      timestamp: new Date(),
-    };
+      const newAlert: BehaviorAlert = {
+        ...alert,
+        id: `alert-${now}`,
+        timestamp: new Date(),
+      };
 
-    setBehaviorAlerts((prev) => [newAlert, ...prev].slice(0, 20));
-  }, []);
+      setBehaviorAlerts((prev) => [newAlert, ...prev].slice(0, 20));
+    },
+    []
+  );
 
-  // -------- MODELS LOAD --------
+  // Load face-api models
   const loadModels = useCallback(async () => {
     try {
       setIsLoading(true);
 
-      // tu chahe to yaha "/models" bhi kar sakta hai
-      const MODEL_URL = "https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model";
+      const MODEL_URL =
+        "https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model";
 
-      // DEMO-SAFE: try/catch inside
-      try {
-        await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
-        await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
-        await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
-        await faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URL);
-      } catch (modelErr) {
-        console.error("face-api model load error (ignored for demo):", modelErr);
-      }
+      await Promise.all([
+        faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+        faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+        faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+        faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URL),
+      ]);
 
-      try {
-        cocoModelRef.current = await cocoSsd.load();
-      } catch (cocoErr) {
-        console.error("coco-ssd load error (ignored for demo):", cocoErr);
-      }
+      // Load COCO-SSD for object detection (phone)
+      cocoModelRef.current = await cocoSsd.load();
 
       setIsModelLoaded(true);
+      console.log("All detection models loaded successfully");
       setError(null);
-      console.log("Demo mode: treating detection models as loaded");
     } catch (err) {
-      console.error("Error in loadModels wrapper:", err);
-      setIsModelLoaded(true);
-      setError(null);
+      console.error("Error loading detection models:", err);
+      setError("Failed to load detection models");
     } finally {
       setIsLoading(false);
     }
   }, []);
 
-  // -------- REGISTERED FACES (STUDENTS) --------
+  // Load registered student face descriptors
   const loadRegisteredFaces = useCallback(async () => {
     if (!isModelLoaded) return;
 
@@ -114,7 +111,6 @@ export const useFaceDetection = () => {
 
       for (const student of registeredStudents) {
         const img = await faceapi.fetchImage(student.profileImage);
-
         const detection = await faceapi
           .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions())
           .withFaceLandmarks()
@@ -137,7 +133,7 @@ export const useFaceDetection = () => {
     }
   }, [isModelLoaded]);
 
-  // -------- GROUP DISCUSSION CHECK --------
+  // Check if two faces are looking at each other (group discussion detection)
   const checkGroupDiscussion = useCallback(
     (faces: DetectedFace[]) => {
       const registeredFaces = faces.filter(
@@ -150,15 +146,18 @@ export const useFaceDetection = () => {
           const face1 = registeredFaces[i];
           const face2 = registeredFaces[j];
 
+          // Check if faces are close to each other (within 400px)
           const distance = Math.sqrt(
             Math.pow(face1.box.x - face2.box.x, 2) +
               Math.pow(face1.box.y - face2.box.y, 2)
           );
 
+          // If faces are close (potential discussion)
           if (distance < 400) {
             const face1CenterX = face1.box.x + face1.box.width / 2;
             const face2CenterX = face2.box.x + face2.box.width / 2;
 
+            // Rough check if they're facing each other
             if (
               (face1CenterX < face2CenterX && face1.box.x < face2.box.x) ||
               (face1CenterX > face2CenterX && face1.box.x > face2.box.x)
@@ -177,7 +176,7 @@ export const useFaceDetection = () => {
     [addAlert]
   );
 
-  // -------- PHONE DETECTION (COCO-SSD) --------
+  // Detect phone in frame
   const detectPhone = useCallback(
     async (video: HTMLVideoElement, faces: DetectedFace[]) => {
       if (!cocoModelRef.current) return;
@@ -187,12 +186,13 @@ export const useFaceDetection = () => {
         console.log("COCO predictions:", predictions);
 
         const phoneDetections = predictions.filter(
-          (p) => p.class === "cell phone" && p.score > 0.3 // 0.5 -> 0.3 for better recall
+          (p) => p.class === "cell phone" && p.score > 0.3 // 0.5 -> 0.3
         );
 
         if (phoneDetections.length > 0) {
           setPhoneDetected(true);
 
+          // Find which student is closest to the phone
           const phone = phoneDetections[0];
           const phoneCenterX = phone.bbox[0] + phone.bbox[2] / 2;
           const phoneCenterY = phone.bbox[1] + phone.bbox[3] / 2;
@@ -233,24 +233,24 @@ export const useFaceDetection = () => {
     [addAlert]
   );
 
-  // -------- CAMERA START / STOP --------
+  // Start camera
   const startCamera = useCallback(async (video: HTMLVideoElement) => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: 720, height: 560, facingMode: "user" },
       });
-
       video.srcObject = stream;
       videoRef.current = video;
       return true;
     } catch (err) {
       console.error("Error starting camera:", err);
-      // demo ke liye UI error hide kar sakta hai:
+      // Demo ke liye error na dikhana ho to comment:
       // setError('Failed to access camera. Please allow camera permissions.');
       return false;
     }
   }, []);
 
+  // Stop camera
   const stopCamera = useCallback(() => {
     if (videoRef.current?.srcObject) {
       const stream = videoRef.current.srcObject as MediaStream;
@@ -268,7 +268,7 @@ export const useFaceDetection = () => {
     setPhoneUser(null);
   }, []);
 
-  // -------- MAIN DETECTION LOOP --------
+  // Detect faces in video
   const detectFaces = useCallback(async () => {
     if (!videoRef.current || !canvasRef.current || !isModelLoaded) return;
 
@@ -288,7 +288,10 @@ export const useFaceDetection = () => {
 
     try {
       const detections = await faceapi
-        .detectAllFaces(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 320 }))
+        .detectAllFaces(
+          video,
+          new faceapi.TinyFaceDetectorOptions({ inputSize: 320 })
+        )
         .withFaceLandmarks()
         .withFaceDescriptors()
         .withFaceExpressions();
@@ -302,18 +305,18 @@ export const useFaceDetection = () => {
 
       const faces: DetectedFace[] = [];
 
+      // Match faces with registered students
       if (labeledDescriptorsRef.current.length > 0) {
-        // Tighter threshold for better accuracy
         const faceMatcher = new faceapi.FaceMatcher(
           labeledDescriptorsRef.current,
-          0.5
+          0.5 // was 0.6
         );
 
         resizedDetections.forEach((detection, i) => {
           const match = faceMatcher.findBestMatch(detection.descriptor);
 
           const rawConfidence = Math.round((1 - match.distance) * 100);
-          const isSure = rawConfidence >= 80; // < 80% -> Unknown
+          const isSure = rawConfidence >= 80; // <80% => Unknown
 
           const isRegistered =
             match.label !== "unknown" && isSure;
@@ -347,9 +350,9 @@ export const useFaceDetection = () => {
             const label = isRegistered
               ? `${match.label} (${rawConfidence}%)`
               : "Unknown";
+            const textWidth = ctx.measureText(label).width;
 
             ctx.fillStyle = isRegistered ? "#22c55e" : "#ef4444";
-            const textWidth = ctx.measureText(label).width;
             ctx.fillRect(box.x, box.y - 25, textWidth + 20, 25);
 
             ctx.fillStyle = "#ffffff";
@@ -358,9 +361,10 @@ export const useFaceDetection = () => {
           }
         });
       } else {
-        // no registered faces — generic boxes
+        // No registered faces, just draw detection boxes
         resizedDetections.forEach((detection, i) => {
           const box = detection.detection.box;
+
           faces.push({
             id: `face-${i}`,
             name: "Detecting...",
@@ -384,18 +388,23 @@ export const useFaceDetection = () => {
       }
 
       setDetectedFaces(faces);
+
+      // Check for group discussion
       checkGroupDiscussion(faces);
+
+      // Detect phone usage
       await detectPhone(video, faces);
     } catch (err) {
       console.error("Face detection error:", err);
     }
 
+    // Continue detection loop (every 500ms for performance)
     setTimeout(() => {
       animationRef.current = requestAnimationFrame(detectFaces);
     }, 500);
   }, [isModelLoaded, checkGroupDiscussion, detectPhone]);
 
-  // -------- EFFECTS --------
+  // Initialize models on mount
   useEffect(() => {
     loadModels();
     return () => {
@@ -403,6 +412,7 @@ export const useFaceDetection = () => {
     };
   }, [loadModels, stopCamera]);
 
+  // Load registered faces when models are ready
   useEffect(() => {
     if (isModelLoaded) {
       loadRegisteredFaces();
