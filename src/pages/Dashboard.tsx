@@ -45,8 +45,8 @@ const Dashboard = () => {
       onClick: () => navigate("/attendance/face-recognition"),
     },
     {
-      title: "QR Code Scan",
-      description: "Quick attendance marking via QR code scanning",
+      title: "Attendance",
+      description: "Quick attendance marking via face recognition scanning",
       icon: QrCode,
       onClick: () => navigate("/attendance/qr-code"),
     },

@@ -12,8 +12,8 @@ const Index = () => {
     },
     {
       icon: QrCode,
-      title: "QR Code Scanning",
-      description: "Quick and easy QR code based attendance system",
+      title: "Attendance",
+      description: "Quick and easy facial recognition based attendance system",
     },
     {
       icon: BarChart3,
@@ -38,11 +38,11 @@ const Index = () => {
           </div>
           
           <h1 className="text-4xl md:text-6xl font-bold text-foreground mb-6 leading-tight">
-            Smart Attendance Management
+            Classroom Behaviour AI System
           </h1>
           
           <p className="text-lg md:text-xl text-muted-foreground mb-10 max-w-2xl mx-auto">
-            Modern attendance tracking with Face Recognition, QR Codes, and AI-powered analytics for educational institutions
+            Modern classroom behaviour with Face Recognition, and AI-powered analytics for educational institutions
           </p>
           
           <div className="flex flex-wrap gap-4 justify-center">
@@ -95,7 +95,7 @@ const Index = () => {
             Ready to Get Started?
           </h2>
           <p className="text-lg text-muted-foreground mb-8 max-w-xl mx-auto">
-            Transform your attendance system with AI-powered technology
+            Transform your classroom with AI-powered technology
           </p>
           <Link to="/auth">
             <Button size="lg" className="gap-2">
@@ -111,7 +111,7 @@ const Index = () => {
         <div className="container mx-auto px-4 text-center">
           <div className="flex items-center justify-center gap-2 mb-2">
             <Brain className="h-5 w-5 text-primary" />
-            <span className="font-semibold text-foreground">AttendAI</span>
+            <span className="font-semibold text-foreground">EduPULSE</span>
           </div>
           <p className="text-sm text-muted-foreground">
             AI-powered attendance management platform
