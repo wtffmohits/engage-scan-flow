@@ -17,7 +17,8 @@ import {
   Download,
   Loader2,
   Camera,
-  UserCheck
+  UserCheck,
+  Smartphone
 } from "lucide-react";
 
 interface StudentBehavior {
@@ -41,17 +42,16 @@ const Monitoring = () => {
     isModelLoaded, 
     detectedFaces, 
     error,
+    phoneDetected,
+    phoneUser,
+    behaviorAlerts,
     startCamera, 
     stopCamera, 
     detectFaces,
     canvasRef 
   } = useFaceDetection();
 
-  const [alerts, setAlerts] = useState([
-    { time: "10:45:23", message: "Student D using phone detected", severity: "high" },
-    { time: "10:43:15", message: "Student B looking away for 20 sec", severity: "medium" },
-    { time: "10:40:08", message: "Group discussion detected in row 3", severity: "low" },
-  ]);
+  const [alerts, setAlerts] = useState<Array<{ time: string; message: string; severity: string }>>([]);
 
   const [behaviorStats, setBehaviorStats] = useState({
     attentive: 0,
@@ -97,22 +97,24 @@ const Monitoring = () => {
         id: index + 1,
         name: face.name,
         rollNo: face.student?.rollNo,
-        emotion: face.isRegistered ? "Focused" : "Unknown",
+        emotion: face.isRegistered ? (phoneDetected && phoneUser === face.name ? "Using Phone" : "Focused") : "Unknown",
         attention: face.isRegistered ? face.confidence : 0,
-        activity: face.isRegistered ? "Present" : "Not Registered",
-        alert: !face.isRegistered
+        activity: face.isRegistered ? (phoneDetected && phoneUser === face.name ? "Phone Usage" : "Present") : "Not Registered",
+        alert: !face.isRegistered || (phoneDetected && phoneUser === face.name)
       }));
       setStudents(updatedStudents);
       
       // Update behavior stats
       const registered = detectedFaces.filter(f => f.isRegistered).length;
       const unregistered = detectedFaces.filter(f => !f.isRegistered).length;
+      const groupDiscussionCount = behaviorAlerts.filter(a => a.type === 'group_discussion').length;
+      
       setBehaviorStats({
         attentive: registered,
         distracted: unregistered,
-        talking: 0,
+        talking: groupDiscussionCount,
         sleeping: 0,
-        phoneUsage: 0,
+        phoneUsage: phoneDetected ? 1 : 0,
       });
       
       // Add alert for new registered student detection
@@ -123,19 +125,39 @@ const Monitoring = () => {
         const timeStr = now.toLocaleTimeString('en-US', { hour12: false });
         
         setAlerts(prev => {
-          const exists = prev.some(a => a.message.includes(latestFace.name));
+          const exists = prev.some(a => a.message.includes(latestFace.name) && a.message.includes('detected'));
           if (!exists) {
             return [{
               time: timeStr,
               message: `${latestFace.name} (Roll: ${latestFace.student?.rollNo}) detected - ${latestFace.confidence}% match`,
               severity: "low"
-            }, ...prev].slice(0, 10);
+            }, ...prev].slice(0, 20);
           }
           return prev;
         });
       }
     }
-  }, [detectedFaces]);
+  }, [detectedFaces, phoneDetected, phoneUser, behaviorAlerts]);
+
+  // Update alerts from behavior detection
+  useEffect(() => {
+    if (behaviorAlerts.length > 0) {
+      const latestAlert = behaviorAlerts[0];
+      const timeStr = latestAlert.timestamp.toLocaleTimeString('en-US', { hour12: false });
+      
+      setAlerts(prev => {
+        const exists = prev.some(a => a.message === latestAlert.message);
+        if (!exists) {
+          return [{
+            time: timeStr,
+            message: latestAlert.message,
+            severity: latestAlert.severity
+          }, ...prev].slice(0, 20);
+        }
+        return prev;
+      });
+    }
+  }, [behaviorAlerts]);
 
   // Update class engagement based on detected faces
   useEffect(() => {
@@ -242,6 +264,19 @@ const Monitoring = () => {
                           )}
                         </p>
                       </div>
+
+                      {/* Phone Detection Alert */}
+                      {phoneDetected && (
+                        <div className="absolute top-4 right-4 bg-destructive/95 backdrop-blur-sm px-4 py-3 rounded-lg shadow-lg animate-pulse">
+                          <div className="flex items-center gap-2">
+                            <Smartphone className="h-5 w-5 text-white" />
+                            <div>
+                              <p className="font-bold text-white text-sm">📱 PHONE DETECTED!</p>
+                              <p className="text-xs text-white/90">{phoneUser} using phone</p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
 
                       {/* Detected faces info overlay */}
                       {detectedFaces.filter(f => f.isRegistered).map((face, index) => (

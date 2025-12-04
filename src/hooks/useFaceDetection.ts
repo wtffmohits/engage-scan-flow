@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import * as faceapi from 'face-api.js';
+import * as cocoSsd from '@tensorflow-models/coco-ssd';
+import '@tensorflow/tfjs';
 import { registeredStudents, RegisteredStudent } from '@/data/registeredStudents';
 
 export interface DetectedFace {
@@ -14,6 +16,16 @@ export interface DetectedFace {
   };
   isRegistered: boolean;
   student?: RegisteredStudent;
+  landmarks?: faceapi.FaceLandmarks68;
+}
+
+export interface BehaviorAlert {
+  id: string;
+  type: 'phone' | 'group_discussion' | 'student_detected';
+  message: string;
+  severity: 'high' | 'medium' | 'low';
+  timestamp: Date;
+  students: string[];
 }
 
 export const useFaceDetection = () => {
@@ -21,11 +33,36 @@ export const useFaceDetection = () => {
   const [isModelLoaded, setIsModelLoaded] = useState(false);
   const [detectedFaces, setDetectedFaces] = useState<DetectedFace[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [phoneDetected, setPhoneDetected] = useState(false);
+  const [phoneUser, setPhoneUser] = useState<string | null>(null);
+  const [behaviorAlerts, setBehaviorAlerts] = useState<BehaviorAlert[]>([]);
   
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const labeledDescriptorsRef = useRef<faceapi.LabeledFaceDescriptors[]>([]);
   const animationRef = useRef<number | null>(null);
+  const cocoModelRef = useRef<cocoSsd.ObjectDetection | null>(null);
+  const lastAlertTimeRef = useRef<{ [key: string]: number }>({});
+
+  // Add alert with cooldown to prevent spam
+  const addAlert = useCallback((alert: Omit<BehaviorAlert, 'id' | 'timestamp'>) => {
+    const alertKey = `${alert.type}-${alert.students.join('-')}`;
+    const now = Date.now();
+    const lastTime = lastAlertTimeRef.current[alertKey] || 0;
+    
+    // 5 second cooldown for same alert
+    if (now - lastTime < 5000) return;
+    
+    lastAlertTimeRef.current[alertKey] = now;
+    
+    const newAlert: BehaviorAlert = {
+      ...alert,
+      id: `alert-${now}`,
+      timestamp: new Date()
+    };
+    
+    setBehaviorAlerts(prev => [newAlert, ...prev].slice(0, 20));
+  }, []);
 
   // Load face-api models
   const loadModels = useCallback(async () => {
@@ -40,11 +77,14 @@ export const useFaceDetection = () => {
         faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URL),
       ]);
       
+      // Load COCO-SSD for object detection (phone)
+      cocoModelRef.current = await cocoSsd.load();
+      
       setIsModelLoaded(true);
-      console.log('Face detection models loaded successfully');
+      console.log('All detection models loaded successfully');
     } catch (err) {
-      console.error('Error loading face detection models:', err);
-      setError('Failed to load face detection models');
+      console.error('Error loading detection models:', err);
+      setError('Failed to load detection models');
     } finally {
       setIsLoading(false);
     }
@@ -79,6 +119,99 @@ export const useFaceDetection = () => {
     }
   }, [isModelLoaded]);
 
+  // Check if two faces are looking at each other (group discussion detection)
+  const checkGroupDiscussion = useCallback((faces: DetectedFace[]) => {
+    const registeredFaces = faces.filter(f => f.isRegistered && f.landmarks);
+    
+    if (registeredFaces.length < 2) return;
+    
+    for (let i = 0; i < registeredFaces.length; i++) {
+      for (let j = i + 1; j < registeredFaces.length; j++) {
+        const face1 = registeredFaces[i];
+        const face2 = registeredFaces[j];
+        
+        // Check if faces are close to each other (within 300px)
+        const distance = Math.sqrt(
+          Math.pow(face1.box.x - face2.box.x, 2) + 
+          Math.pow(face1.box.y - face2.box.y, 2)
+        );
+        
+        // If faces are close and both are looking sideways (potential discussion)
+        if (distance < 400) {
+          const face1CenterX = face1.box.x + face1.box.width / 2;
+          const face2CenterX = face2.box.x + face2.box.width / 2;
+          
+          // Check if they're facing each other (one on left, one on right)
+          if ((face1CenterX < face2CenterX && face1.box.x < face2.box.x) ||
+              (face1CenterX > face2CenterX && face1.box.x > face2.box.x)) {
+            addAlert({
+              type: 'group_discussion',
+              message: `Group Discussion: ${face1.name} & ${face2.name} talking`,
+              severity: 'medium',
+              students: [face1.name, face2.name]
+            });
+          }
+        }
+      }
+    }
+  }, [addAlert]);
+
+  // Detect phone in frame
+  const detectPhone = useCallback(async (video: HTMLVideoElement, faces: DetectedFace[]) => {
+    if (!cocoModelRef.current) return;
+    
+    try {
+      const predictions = await cocoModelRef.current.detect(video);
+      
+      const phoneDetections = predictions.filter(p => 
+        p.class === 'cell phone' && p.score > 0.5
+      );
+      
+      if (phoneDetections.length > 0) {
+        setPhoneDetected(true);
+        
+        // Find which student is closest to the phone
+        const phone = phoneDetections[0];
+        const phoneCenterX = phone.bbox[0] + phone.bbox[2] / 2;
+        const phoneCenterY = phone.bbox[1] + phone.bbox[3] / 2;
+        
+        let closestStudent = 'Unknown Student';
+        let minDistance = Infinity;
+        
+        faces.forEach(face => {
+          if (face.isRegistered) {
+            const faceCenterX = face.box.x + face.box.width / 2;
+            const faceCenterY = face.box.y + face.box.height / 2;
+            
+            const distance = Math.sqrt(
+              Math.pow(faceCenterX - phoneCenterX, 2) + 
+              Math.pow(faceCenterY - phoneCenterY, 2)
+            );
+            
+            if (distance < minDistance) {
+              minDistance = distance;
+              closestStudent = face.name;
+            }
+          }
+        });
+        
+        setPhoneUser(closestStudent);
+        
+        addAlert({
+          type: 'phone',
+          message: `📱 Phone Usage: ${closestStudent} using phone`,
+          severity: 'high',
+          students: [closestStudent]
+        });
+      } else {
+        setPhoneDetected(false);
+        setPhoneUser(null);
+      }
+    } catch (err) {
+      console.error('Phone detection error:', err);
+    }
+  }, [addAlert]);
+
   // Start camera
   const startCamera = useCallback(async (video: HTMLVideoElement) => {
     try {
@@ -107,6 +240,8 @@ export const useFaceDetection = () => {
       animationRef.current = null;
     }
     setDetectedFaces([]);
+    setPhoneDetected(false);
+    setPhoneUser(null);
   }, []);
 
   // Detect faces in video
@@ -165,7 +300,8 @@ export const useFaceDetection = () => {
               height: box.height
             },
             isRegistered,
-            student
+            student,
+            landmarks: detection.landmarks
           });
           
           // Draw bounding box
@@ -215,6 +351,13 @@ export const useFaceDetection = () => {
       }
       
       setDetectedFaces(faces);
+      
+      // Check for group discussion
+      checkGroupDiscussion(faces);
+      
+      // Detect phone usage
+      await detectPhone(video, faces);
+      
     } catch (err) {
       console.error('Face detection error:', err);
     }
@@ -223,7 +366,7 @@ export const useFaceDetection = () => {
     setTimeout(() => {
       animationRef.current = requestAnimationFrame(detectFaces);
     }, 500);
-  }, [isModelLoaded]);
+  }, [isModelLoaded, checkGroupDiscussion, detectPhone]);
 
   // Initialize models on mount
   useEffect(() => {
@@ -245,6 +388,9 @@ export const useFaceDetection = () => {
     isModelLoaded,
     detectedFaces,
     error,
+    phoneDetected,
+    phoneUser,
+    behaviorAlerts,
     startCamera,
     stopCamera,
     detectFaces,
