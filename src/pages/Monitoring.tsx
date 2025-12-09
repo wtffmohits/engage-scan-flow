@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { useState, useEffect, useRef, useCallback } from "react";
-// import { useFaceDetection } from "@/hooks/useFaceDetection";
+import { useFaceDetection } from "@/hooks/useFaceDetection";
 import { usePythonDetection } from "@/hooks/usePythonDetection";
 import { 
   Video, 
@@ -51,7 +51,7 @@ const {
     stopCamera, 
     detectFaces, // Ye ab dummy function hai, backend auto-detect karta hai
     canvasRef 
-  } = usePythonDetection(); // <-- Changed from useFaceDetection()
+  } = useFaceDetection(); // <-- Changed from useFaceDetection()
 
   const [alerts, setAlerts] = useState<Array<{ time: string; message: string; severity: string }>>([]);
 
