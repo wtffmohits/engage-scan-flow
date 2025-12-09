@@ -105,30 +105,51 @@ const loadModels = useCallback(async () => {
 }, []);
 
 
-  // Load registered student face descriptors
+  // Load registered student face descriptors (both static and dynamic from localStorage)
   const loadRegisteredFaces = useCallback(async () => {
     if (!isModelLoaded) return;
     
     try {
       const labeledDescriptors: faceapi.LabeledFaceDescriptors[] = [];
       
+      // Load static registered students
       for (const student of registeredStudents) {
-        const img = await faceapi.fetchImage(student.profileImage);
-        const detection = await faceapi
-          .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions())
-          .withFaceLandmarks()
-          .withFaceDescriptor();
-        
-        if (detection) {
-          labeledDescriptors.push(
-            new faceapi.LabeledFaceDescriptors(student.name, [detection.descriptor])
-          );
-          console.log(`Loaded face descriptor for ${student.name}`);
+        try {
+          const img = await faceapi.fetchImage(student.profileImage);
+          const detection = await faceapi
+            .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions())
+            .withFaceLandmarks()
+            .withFaceDescriptor();
+          
+          if (detection) {
+            labeledDescriptors.push(
+              new faceapi.LabeledFaceDescriptors(student.name, [detection.descriptor])
+            );
+            console.log(`Loaded face descriptor for ${student.name}`);
+          }
+        } catch (err) {
+          console.error(`Error loading face for ${student.name}:`, err);
+        }
+      }
+      
+      // Load dynamically registered students from localStorage
+      const dynamicStudents = JSON.parse(localStorage.getItem('registeredStudents') || '[]');
+      for (const student of dynamicStudents) {
+        if (student.faceDescriptor && student.name) {
+          try {
+            const descriptor = new Float32Array(student.faceDescriptor);
+            labeledDescriptors.push(
+              new faceapi.LabeledFaceDescriptors(student.name, [descriptor])
+            );
+            console.log(`Loaded dynamic face descriptor for ${student.name}`);
+          } catch (err) {
+            console.error(`Error loading dynamic face for ${student.name}:`, err);
+          }
         }
       }
       
       labeledDescriptorsRef.current = labeledDescriptors;
-      console.log('Registered faces loaded:', labeledDescriptors.length);
+      console.log('Total registered faces loaded:', labeledDescriptors.length);
     } catch (err) {
       console.error('Error loading registered faces:', err);
     }
