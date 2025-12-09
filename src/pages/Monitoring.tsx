@@ -4,7 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useFaceDetection } from "@/hooks/useFaceDetection";
+// import { useFaceDetection } from "@/hooks/useFaceDetection";
+import { usePythonDetection } from "@/hooks/usePythonDetection";
 import { 
   Video, 
   AlertTriangle, 
@@ -37,7 +38,8 @@ const Monitoring = () => {
   const [students, setStudents] = useState<StudentBehavior[]>([]);
   const videoRef = useRef<HTMLVideoElement>(null);
   
-  const { 
+// Monitoring component ke andar line 46 ke paas
+const { 
     isLoading, 
     isModelLoaded, 
     detectedFaces, 
@@ -47,9 +49,9 @@ const Monitoring = () => {
     behaviorAlerts,
     startCamera, 
     stopCamera, 
-    detectFaces,
+    detectFaces, // Ye ab dummy function hai, backend auto-detect karta hai
     canvasRef 
-  } = useFaceDetection();
+  } = usePythonDetection(); // <-- Changed from useFaceDetection()
 
   const [alerts, setAlerts] = useState<Array<{ time: string; message: string; severity: string }>>([]);
 
@@ -143,7 +145,7 @@ const Monitoring = () => {
   useEffect(() => {
     if (behaviorAlerts.length > 0) {
       const latestAlert = behaviorAlerts[0];
-      const timeStr = latestAlert.timestamp.toLocaleTimeString('en-US', { hour12: false });
+      const timeStr = latestAlert.timestamp.toLocaleString('en-US', { hour12: false });
       
       setAlerts(prev => {
         const exists = prev.some(a => a.message === latestAlert.message);
