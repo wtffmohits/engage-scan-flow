@@ -192,18 +192,29 @@ const loadModels = useCallback(async () => {
     }
   }, [addAlert]);
 
-  // Detect phone in frame
+  // Detect phone in frame - using multiple class names for better detection
   const detectPhone = useCallback(async (video: HTMLVideoElement, faces: DetectedFace[]) => {
-    if (!cocoModelRef.current) return;
+    if (!cocoModelRef.current) {
+      console.log('COCO-SSD model not loaded yet');
+      return;
+    }
     
     try {
       const predictions = await cocoModelRef.current.detect(video);
       
+      // Log all detections for debugging
+      if (predictions.length > 0) {
+        console.log('COCO-SSD detections:', predictions.map(p => `${p.class}: ${p.score.toFixed(2)}`));
+      }
+      
+      // Check for phone-related objects (cell phone, remote, book can sometimes be phone)
+      // COCO-SSD uses "cell phone" class for mobile phones
       const phoneDetections = predictions.filter(p => 
-        p.class === 'cell phone' && p.score > 0.5
+        (p.class === 'cell phone' || p.class === 'remote') && p.score > 0.3
       );
       
       if (phoneDetections.length > 0) {
+        console.log('📱 Phone detected!', phoneDetections);
         setPhoneDetected(true);
         
         // Find which student is closest to the phone
@@ -214,8 +225,9 @@ const loadModels = useCallback(async () => {
         let closestStudent = 'Unknown Student';
         let minDistance = Infinity;
         
-        faces.forEach(face => {
-          if (face.isRegistered) {
+        // If we have detected faces, find the closest one
+        if (faces.length > 0) {
+          faces.forEach(face => {
             const faceCenterX = face.box.x + face.box.width / 2;
             const faceCenterY = face.box.y + face.box.height / 2;
             
@@ -226,10 +238,10 @@ const loadModels = useCallback(async () => {
             
             if (distance < minDistance) {
               minDistance = distance;
-              closestStudent = face.name;
+              closestStudent = face.isRegistered ? face.name : 'Unknown Student';
             }
-          }
-        });
+          });
+        }
         
         setPhoneUser(closestStudent);
         
