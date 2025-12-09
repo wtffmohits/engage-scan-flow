@@ -10,6 +10,7 @@ import Analytics from "./pages/Analytics";
 import Auth from "./pages/Auth";
 import Monitoring from "./pages/Monitoring";
 import SessionSummary from "./pages/SessionSummary";
+import StudentRegistration from "./pages/StudentRegistration";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -28,6 +29,7 @@ const App = () => (
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/monitoring" element={<Monitoring />} />
           <Route path="/session/:id/summary" element={<SessionSummary />} />
+          <Route path="/students/register" element={<StudentRegistration />} />
           <Route path="/auth" element={<Auth />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
